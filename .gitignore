@@ -1,0 +1,22 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local config and runtime artifacts
+config.json
+nohup.log
+logs/
+profiles/
+tokens/
+
+# Local auth material
+auths/
+auths1/
+auths2/
+
+# Local debug screenshots generated during runs
+login_diagnostic.png
+password_diag.png
+password_diag_3.png
+headed_example.png

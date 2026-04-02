@@ -1,0 +1,41 @@
+name: Playwright Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/playwright-smoke.yml"
+      - "requirements-ci.txt"
+      - "smoke_playwright.py"
+      - "README.md"
+  pull_request:
+    paths:
+      - ".github/workflows/playwright-smoke.yml"
+      - "requirements-ci.txt"
+      - "smoke_playwright.py"
+      - "README.md"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run Playwright smoke test
+        run: python smoke_playwright.py
