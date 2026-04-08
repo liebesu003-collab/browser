@@ -1,0 +1,18 @@
+{
+  "token_dir": "tokens",
+  "log_dir": "logs",
+  "virtualbrowser_profile_root": "profiles",
+  "run_count": 1,
+  "concurrency": 1,
+  "headless": true,
+  "log_enabled": true,
+  "email_providers": [
+    "tempmail",
+    "mailtm"
+  ],
+  "tempmail_timeout": 120,
+  "browser_locale": "en-US",
+  "browser_timezone": "America/New_York",
+  "browser_width": 1365,
+  "browser_height": 900
+}
