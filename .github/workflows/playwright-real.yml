@@ -3,6 +3,10 @@ name: Playwright Real Run
 on:
   workflow_dispatch:
     inputs:
+      runner_labels:
+        description: 'JSON array of self-hosted runner labels, for example ["self-hosted","linux"]'
+        required: true
+        default: '["self-hosted","linux"]'
       run_count:
         description: "How many registration attempts to run (0 = infinite)"
         required: true
@@ -12,7 +16,7 @@ on:
         required: true
         default: "1"
       headless:
-        description: "Run Chromium in headless mode on GitHub Actions (false is recommended with xvfb-run)"
+        description: "Run Chromium headless on the self-hosted runner"
         required: true
         type: boolean
         default: false
@@ -31,7 +35,7 @@ concurrency:
 
 jobs:
   real:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 90
 
     steps:
@@ -48,17 +52,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-real.txt
 
-      - name: Install Chromium for Playwright
+      - name: Install Chromium for Playwright on Linux
+        if: runner.os == 'Linux'
         run: python -m playwright install --with-deps chromium
 
+      - name: Install Chromium for Playwright on non-Linux
+        if: runner.os != 'Linux'
+        run: python -m playwright install chromium
+
       - name: Ensure xvfb-run is available
+        if: runner.os == 'Linux'
         run: |
           if ! command -v xvfb-run >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y xvfb
+            if command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y xvfb
+            else
+              echo "xvfb-run is required on Linux self-hosted runners; install xvfb before running this workflow."
+              exit 1
+            fi
           fi
 
-      - name: Build config.json for GitHub Actions
+      - name: Build config.json for self-hosted runner
         env:
           BASE_CONFIG_JSON: ${{ secrets.SMOKE_PLAYWRIGHT_CONFIG_JSON }}
           ACCOUNT_PASSWORD_SECRET: ${{ secrets.SMOKE_PLAYWRIGHT_ACCOUNT_PASSWORD }}
@@ -69,6 +84,7 @@ jobs:
           CONCURRENCY_INPUT: ${{ inputs.concurrency }}
           HEADLESS_INPUT: ${{ inputs.headless }}
           LOG_ENABLED_INPUT: ${{ inputs.log_enabled }}
+          RUNNER_OS_NAME: ${{ runner.os }}
         run: |
           python - <<'PY'
           import json
@@ -112,8 +128,9 @@ jobs:
           cfg.setdefault("browser_width", 1365)
           cfg.setdefault("browser_height", 900)
 
-          # GitHub-hosted runners use Playwright Chromium instead of the local Windows-only browser.
-          cfg.pop("virtualbrowser_executable_path", None)
+          # Linux and macOS self-hosted runners use Playwright Chromium by default.
+          if os.environ.get("RUNNER_OS_NAME") != "Windows":
+              cfg.pop("virtualbrowser_executable_path", None)
 
           required_dirs = [
               cfg["token_dir"],
@@ -128,17 +145,23 @@ jobs:
               encoding="utf-8",
           )
 
-          print("config.json written for GitHub Actions")
+          print("config.json written for self-hosted runner")
+          print(f"runner_os={os.environ.get('RUNNER_OS_NAME')}")
           print(f"run_count={cfg['run_count']}")
           print(f"concurrency={cfg['concurrency']}")
           print(f"headless={cfg['headless']}")
           print(f"log_enabled={cfg['log_enabled']}")
           PY
 
-      - name: Run full Playwright workflow
+      - name: Run full Playwright workflow on Linux
+        if: runner.os == 'Linux'
         run: |
           xvfb-run --auto-servernum --server-args="-screen 0 1365x900x24 -ac +extension RANDR" \
             python smoke_playwright.py
+
+      - name: Run full Playwright workflow on non-Linux
+        if: runner.os != 'Linux'
+        run: python smoke_playwright.py
 
       - name: Upload run artifacts
         if: always()

@@ -11,7 +11,7 @@ The lightweight smoke workflow verifies only that Python, Playwright, and Chromi
 
 ## Manual real run
 
-The full workflow runs `smoke_playwright.py` on GitHub Actions and is meant for manual execution only.
+The full workflow runs `smoke_playwright.py` on a self-hosted runner and is meant for manual execution only.
 
 - workflow: `.github/workflows/playwright-real.yml`
 - dependencies: `requirements-real.txt`
@@ -28,6 +28,9 @@ Set these repository secrets before running it:
 Behavior notes:
 
 - the workflow is `workflow_dispatch` only
+- it targets a self-hosted runner via the `runner_labels` input, which defaults to `["self-hosted","linux"]`
 - it writes a temporary `config.json` during the run
-- it removes `virtualbrowser_executable_path` from the runtime config so GitHub-hosted Linux runners use Playwright Chromium
+- Linux runners use `xvfb-run` for the Playwright session when `headless` is `false`
+- Linux and macOS runners remove `virtualbrowser_executable_path` from the runtime config so they use Playwright Chromium
+- Windows runners keep `virtualbrowser_executable_path` if your base config provides one
 - it uploads `logs/`, `tokens/`, screenshots, and `proxy_rotation_state.json` as workflow artifacts
