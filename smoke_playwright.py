@@ -2848,13 +2848,13 @@ async def main() -> int:
                 pass
         print(f"Completed. Success: {success_count}, Failed: {fail_count}")
 
- if fail_count >0 and success_count ==0:
- return1
- return0
+    if fail_count > 0 and success_count == 0:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
         pass
