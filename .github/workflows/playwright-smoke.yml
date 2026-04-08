@@ -7,12 +7,14 @@ on:
       - ".github/workflows/playwright-smoke.yml"
       - "requirements-ci.txt"
       - "smoke_playwright.py"
+      - "smoke_playwright_ci.py"
       - "README.md"
   pull_request:
     paths:
       - ".github/workflows/playwright-smoke.yml"
       - "requirements-ci.txt"
       - "smoke_playwright.py"
+      - "smoke_playwright_ci.py"
       - "README.md"
 
 jobs:
@@ -38,4 +40,4 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Run Playwright smoke test
-        run: python smoke_playwright.py
+        run: python smoke_playwright_ci.py
