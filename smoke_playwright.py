@@ -55,6 +55,10 @@ DEFAULT_BROWSER_VIEWPORT = {"width": 1365, "height": 900}
 DEFAULT_LOGIN_CHALLENGE_TIMEOUT = 90
 
 
+class HumanVerificationRequired(RuntimeError):
+    """Raised when Cloudflare or another gate blocks the login form."""
+
+
 def load_config() -> dict:
     if not CONFIG_PATH.exists():
         raise SystemExit(f"Missing config file: {CONFIG_PATH}")
@@ -843,6 +847,75 @@ async def page_body_safe(page, limit: int = 400) -> str:
     return body[:limit].strip()
 
 
+def classify_human_verification(signals: list[str]) -> str | None:
+    normalized = " ".join(part.strip().lower() for part in signals if part and part.strip())
+    if not normalized:
+        return None
+
+    verify_markers = (
+        "verify you are human",
+        "checking if the site connection is secure",
+        "please stand by, while we are checking your browser",
+        "security check to access",
+        "complete the security check to access",
+    )
+    cloudflare_markers = (
+        "cloudflare",
+        "turnstile",
+        "challenges.cloudflare.com",
+        "challenge-platform",
+        "__cf_chl",
+        "cf-challenge",
+    )
+
+    has_verify_marker = any(marker in normalized for marker in verify_markers)
+    has_cloudflare_marker = any(marker in normalized for marker in cloudflare_markers)
+
+    if has_cloudflare_marker and has_verify_marker:
+        return "Cloudflare human verification page is blocking the login form"
+    if "turnstile" in normalized or "challenges.cloudflare.com" in normalized:
+        return "Cloudflare Turnstile challenge is blocking the login form"
+    if "captcha" in normalized and "human" in normalized:
+        return "A human verification challenge is blocking the login form"
+    return None
+
+
+async def detect_human_verification(page) -> str | None:
+    signals: list[str] = [page.url]
+
+    title = await page_title_safe(page)
+    if title:
+        signals.append(title)
+
+    body = await page_body_safe(page, limit=2000)
+    if body:
+        signals.append(body)
+
+    try:
+        signals.extend(frame.url for frame in page.frames if frame.url)
+    except Exception:
+        pass
+
+    try:
+        iframe_sources = await page.locator("iframe").evaluate_all(
+            """els => els
+                .map((el) => el.getAttribute("src") || el.src || "")
+                .filter(Boolean)"""
+        )
+        signals.extend(str(src) for src in iframe_sources if src)
+    except Exception:
+        pass
+
+    return classify_human_verification(signals)
+
+
+async def dump_blocked_page(page, worker_id: int, label: str, reason: str | None = None) -> None:
+    if reason:
+        print(f"[{label}] {reason}")
+    await save_page_snapshot_safe(page, worker_id, label)
+    await dump_page_debug(page, worker_id, label)
+
+
 async def wait_for_login_ready(page, timeout_ms: int = LOGIN_CHALLENGE_TIMEOUT * 1000) -> None:
     end = time.time() + timeout_ms / 1000
     last_state = None
@@ -858,6 +931,9 @@ async def wait_for_login_ready(page, timeout_ms: int = LOGIN_CHALLENGE_TIMEOUT *
     print("[登录页等待] 等待页面内容加载...")
     while time.time() < end:
         body = await page_body_safe(page)
+        challenge_reason = classify_human_verification([page.url, body])
+        if challenge_reason:
+            raise HumanVerificationRequired(challenge_reason)
         if body and len(body) > 100:
             print(f"[登录页等待] 页面内容已加载 ({len(body)} bytes)")
             break
@@ -865,6 +941,10 @@ async def wait_for_login_ready(page, timeout_ms: int = LOGIN_CHALLENGE_TIMEOUT *
 
     # Then wait for interactive elements
     while time.time() < end:
+        challenge_reason = await detect_human_verification(page)
+        if challenge_reason:
+            raise HumanVerificationRequired(challenge_reason)
+
         for selector in selectors:
             try:
                 if await page.locator(selector).count() > 0:
@@ -2293,7 +2373,11 @@ async def register_one(playwright) -> bool:
         await page.goto(login_url, wait_until="domcontentloaded")
         # Wait for React to hydrate and render the form
         await page.wait_for_timeout(5000)
-        await wait_for_login_ready(page)
+        try:
+            await wait_for_login_ready(page)
+        except HumanVerificationRequired as exc:
+            await dump_blocked_page(page, worker_id, "step5_human_verification", str(exc))
+            return False
 
         # 第6步：进入注册流程。
         print_step(6, "进入注册流程")
@@ -2316,7 +2400,11 @@ async def register_one(playwright) -> bool:
         )
         if sign_up:
             await safe_click(page, sign_up)
-            await wait_for_login_ready(page, timeout_ms=45000)
+            try:
+                await wait_for_login_ready(page, timeout_ms=45000)
+            except HumanVerificationRequired as exc:
+                await dump_blocked_page(page, worker_id, "step6_human_verification", str(exc))
+                return False
         else:
             print("[第6步] 未找到注册入口，跳过继续流程")
 
@@ -2332,7 +2420,9 @@ async def register_one(playwright) -> bool:
             60000,
         )
         if not email_input:
-            await dump_page_debug(page, worker_id, "step7_email_input_missing")
+            challenge_reason = await detect_human_verification(page)
+            label = "step7_human_verification" if challenge_reason else "step7_email_input_missing"
+            await dump_blocked_page(page, worker_id, label, challenge_reason)
             return False
         await type_slowly(page, email_input, email)
 
@@ -2352,7 +2442,9 @@ async def register_one(playwright) -> bool:
             10000,
         )
         if not continue_btn:
-            await dump_page_debug(page, worker_id, "step9_continue_missing")
+            challenge_reason = await detect_human_verification(page)
+            label = "step9_human_verification" if challenge_reason else "step9_continue_missing"
+            await dump_blocked_page(page, worker_id, label, challenge_reason)
             return False
         await safe_click(page, continue_btn)
 

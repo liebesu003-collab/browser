@@ -12,10 +12,10 @@ on:
         required: true
         default: "1"
       headless:
-        description: "Run Chromium in headless mode on GitHub Actions"
+        description: "Run Chromium in headless mode on GitHub Actions (false is recommended with xvfb-run)"
         required: true
         type: boolean
-        default: true
+        default: false
       log_enabled:
         description: "Write detailed logs and upload them as artifacts"
         required: true
@@ -50,6 +50,13 @@ jobs:
 
       - name: Install Chromium for Playwright
         run: python -m playwright install --with-deps chromium
+
+      - name: Ensure xvfb-run is available
+        run: |
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xvfb
+          fi
 
       - name: Build config.json for GitHub Actions
         env:
@@ -129,7 +136,9 @@ jobs:
           PY
 
       - name: Run full Playwright workflow
-        run: python smoke_playwright.py
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1365x900x24 -ac +extension RANDR" \
+            python smoke_playwright.py
 
       - name: Upload run artifacts
         if: always()
