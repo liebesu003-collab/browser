@@ -30,7 +30,8 @@ Behavior notes:
 - the workflow is `workflow_dispatch` only
 - it targets a self-hosted runner via the `runner_labels` input, which defaults to `["self-hosted","linux"]`
 - it writes a temporary `config.json` during the run
+- when `use_subscription_proxy=true` on a Linux runner, it fetches nodes from `proxy_subscription_url` and starts a local `sing-box` proxy on the runner
 - Linux runners use `xvfb-run` for the Playwright session when `headless` is `false`
 - Linux and macOS runners remove `virtualbrowser_executable_path` from the runtime config so they use Playwright Chromium
 - Windows runners keep `virtualbrowser_executable_path` if your base config provides one
-- it uploads `logs/`, `tokens/`, screenshots, and `proxy_rotation_state.json` as workflow artifacts
+- it uploads `logs/`, `tokens/`, screenshots, `sing-box.log`, `sing-box-proxy.json`, and `proxy_rotation_state.json` as workflow artifacts

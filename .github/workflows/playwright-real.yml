@@ -25,6 +25,11 @@ on:
         required: true
         type: boolean
         default: true
+      use_subscription_proxy:
+        description: "Fetch nodes from top100.txt and route traffic through a local sing-box proxy"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -73,6 +78,37 @@ jobs:
             fi
           fi
 
+      - name: Install sing-box on Linux
+        if: runner.os == 'Linux' && inputs.use_subscription_proxy
+        run: |
+          SINGBOX_URL="$(python - <<'PY'
+          import json
+          import urllib.request
+
+          api_url = "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+          req = urllib.request.Request(
+              api_url,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "codex",
+              },
+          )
+          release = json.load(urllib.request.urlopen(req, timeout=30))
+          for asset in release["assets"]:
+              name = asset["name"]
+              if "linux-amd64" in name and name.endswith(".tar.gz"):
+                  print(asset["browser_download_url"])
+                  break
+          else:
+              raise SystemExit("No linux-amd64 sing-box release asset found")
+          PY
+          )"
+          curl -fsSL "$SINGBOX_URL" -o /tmp/sing-box.tar.gz
+          mkdir -p /tmp/sing-box
+          tar -xzf /tmp/sing-box.tar.gz -C /tmp/sing-box --strip-components=1
+          sudo install -m 0755 /tmp/sing-box/sing-box /usr/local/bin/sing-box
+          sing-box version
+
       - name: Build config.json for self-hosted runner
         env:
           BASE_CONFIG_JSON: ${{ secrets.SMOKE_PLAYWRIGHT_CONFIG_JSON }}
@@ -85,6 +121,7 @@ jobs:
           HEADLESS_INPUT: ${{ inputs.headless }}
           LOG_ENABLED_INPUT: ${{ inputs.log_enabled }}
           RUNNER_OS_NAME: ${{ runner.os }}
+          USE_SUBSCRIPTION_PROXY_INPUT: ${{ inputs.use_subscription_proxy }}
         run: |
           python - <<'PY'
           import json
@@ -117,20 +154,28 @@ jobs:
           cfg["concurrency"] = max(1, int(os.environ["CONCURRENCY_INPUT"]))
           cfg["headless"] = os.environ["HEADLESS_INPUT"].lower() == "true"
           cfg["log_enabled"] = os.environ["LOG_ENABLED_INPUT"].lower() == "true"
+          use_subscription_proxy = os.environ["USE_SUBSCRIPTION_PROXY_INPUT"].lower() == "true"
+          runner_os = os.environ.get("RUNNER_OS_NAME", "")
 
           cfg.setdefault("token_dir", "tokens")
           cfg.setdefault("log_dir", "logs")
           cfg.setdefault("virtualbrowser_profile_root", "profiles")
           cfg.setdefault("email_providers", ["tempmail", "mailtm"])
           cfg.setdefault("tempmail_timeout", 120)
+          cfg.setdefault("proxy_subscription_url", "https://henryli777.github.io/google_ssr_actions/sub/top100.txt")
           cfg.setdefault("browser_locale", "en-US")
           cfg.setdefault("browser_timezone", "America/New_York")
           cfg.setdefault("browser_width", 1365)
           cfg.setdefault("browser_height", 900)
 
           # Linux and macOS self-hosted runners use Playwright Chromium by default.
-          if os.environ.get("RUNNER_OS_NAME") != "Windows":
+          if runner_os != "Windows":
               cfg.pop("virtualbrowser_executable_path", None)
+
+          if use_subscription_proxy and runner_os == "Linux":
+              local_proxy = "http://127.0.0.1:7897"
+              cfg["api_proxy"] = local_proxy
+              cfg["browser_proxy"] = local_proxy
 
           required_dirs = [
               cfg["token_dir"],
@@ -146,12 +191,46 @@ jobs:
           )
 
           print("config.json written for self-hosted runner")
-          print(f"runner_os={os.environ.get('RUNNER_OS_NAME')}")
+          print(f"runner_os={runner_os}")
           print(f"run_count={cfg['run_count']}")
           print(f"concurrency={cfg['concurrency']}")
           print(f"headless={cfg['headless']}")
           print(f"log_enabled={cfg['log_enabled']}")
           PY
+
+      - name: Build sing-box proxy config on Linux
+        if: runner.os == 'Linux' && inputs.use_subscription_proxy
+        run: |
+          SUBSCRIPTION_URL="$(python - <<'PY'
+          import json
+          with open('config.json', 'r', encoding='utf-8') as f:
+              cfg = json.load(f)
+          print(cfg.get('proxy_subscription_url', 'https://henryli777.github.io/google_ssr_actions/sub/top100.txt'))
+          PY
+          )"
+          python build_singbox_config.py \
+            --subscription-url "$SUBSCRIPTION_URL" \
+            --output sing-box-proxy.json \
+            --listen-host 127.0.0.1 \
+            --listen-port 7897 \
+            --max-nodes 30 \
+            --test-url 'https://www.gstatic.com/generate_204'
+          python -m json.tool sing-box-proxy.json > /dev/null
+          sing-box check -D . -c sing-box-proxy.json
+
+      - name: Start sing-box proxy on Linux
+        if: runner.os == 'Linux' && inputs.use_subscription_proxy
+        run: |
+          nohup sing-box run -D . -c sing-box-proxy.json > sing-box.log 2>&1 &
+          echo $! > sing-box.pid
+          sleep 8
+          if ! kill -0 "$(cat sing-box.pid)" 2>/dev/null; then
+            echo "sing-box failed to start"
+            cat sing-box.log || true
+            exit 1
+          fi
+          curl -I --proxy http://127.0.0.1:7897 https://chatgpt.com --max-time 20
+          curl -I --proxy http://127.0.0.1:7897 https://auth.openai.com --max-time 20
 
       - name: Run full Playwright workflow on Linux
         if: runner.os == 'Linux'
@@ -174,4 +253,6 @@ jobs:
             logs/
             tokens/
             *.png
+            sing-box.log
+            sing-box-proxy.json
             proxy_rotation_state.json

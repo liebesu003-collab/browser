@@ -11,6 +11,7 @@
     "mailtm"
   ],
   "tempmail_timeout": 120,
+  "proxy_subscription_url": "https://henryli777.github.io/google_ssr_actions/sub/top100.txt",
   "browser_locale": "en-US",
   "browser_timezone": "America/New_York",
   "browser_width": 1365,
