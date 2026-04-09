@@ -214,7 +214,7 @@ jobs:
             --listen-host 127.0.0.1 \
             --listen-port 7897 \
             --max-nodes 30 \
-            --test-url 'https://www.gstatic.com/generate_204'
+            --test-url 'https://chatgpt.com/auth/login_with'
           python -m json.tool sing-box-proxy.json > /dev/null
           sing-box check -D . -c sing-box-proxy.json
 
@@ -229,8 +229,8 @@ jobs:
             cat sing-box.log || true
             exit 1
           fi
-          curl -I --proxy http://127.0.0.1:7897 https://chatgpt.com --max-time 20
-          curl -I --proxy http://127.0.0.1:7897 https://auth.openai.com --max-time 20
+          curl -fsSL --proxy http://127.0.0.1:7897 -o /dev/null https://chatgpt.com/auth/login_with --max-time 30
+          curl -fsSL --proxy http://127.0.0.1:7897 -o /dev/null https://auth.openai.com/ --max-time 30
 
       - name: Run full Playwright workflow on Linux
         if: runner.os == 'Linux'
