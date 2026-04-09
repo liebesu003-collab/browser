@@ -28,6 +28,47 @@ def _decode_tag(line: str, index: int) -> str:
     return f"node-{index}"
 
 
+def rank_subscription_lines(lines: list[str]) -> list[str]:
+    ranked: list[tuple[int, int, str]] = []
+
+    for index, line in enumerate(lines, start=1):
+        parsed = urlparse(line)
+        scheme = line.split("://", 1)[0].lower()
+        host = (parsed.hostname or "").lower()
+        tag = _decode_tag(line, index).lower()
+        score = 0
+
+        if any(keyword in tag for keyword in ("gpt", "chatgpt", "openai")):
+            score += 100
+
+        if scheme == "ss":
+            score += 40
+        elif scheme == "trojan":
+            score += 30
+        elif scheme == "hysteria2":
+            score += 10
+        elif scheme == "vless":
+            score += 5
+
+        if host.endswith("network-cdn-gw-yd.net"):
+            score += 30
+        if host.endswith("aikunapp.com"):
+            score += 20
+        if host.endswith("421421.xyz"):
+            score += 15
+
+        # These providers consistently failed ChatGPT/OpenAI validation in CI.
+        if host.endswith("the-best-airport.com"):
+            score -= 80
+        if host.endswith("poke-mon.xyz"):
+            score -= 80
+
+        ranked.append((score, -index, line))
+
+    ranked.sort(reverse=True)
+    return [line for _, _, line in ranked]
+
+
 def _parse_ss(line: str, tag: str) -> dict[str, Any]:
     body = line[5:]
     main = body.split("#", 1)[0]
@@ -268,6 +309,7 @@ def main() -> int:
     args = parser.parse_args()
 
     lines = fetch_subscription(args.subscription_url)
+    lines = rank_subscription_lines(lines)
     if args.max_nodes > 0:
         lines = lines[: args.max_nodes]
 
