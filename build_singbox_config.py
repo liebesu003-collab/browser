@@ -147,7 +147,17 @@ def _parse_hysteria2(line: str, tag: str) -> dict[str, Any]:
     mport = _single(params, "mport")
     if mport:
         outbound.pop("server_port", None)
-        outbound["server_ports"] = [mport]
+        ranges = []
+        for item in mport.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if "-" in item and ":" not in item:
+                start, end = item.split("-", 1)
+                item = f"{start}:{end}"
+            ranges.append(item)
+        if ranges:
+            outbound["server_ports"] = ranges
 
     obfs_type = _single(params, "obfs")
     obfs_password = _single(params, "obfs-password")
