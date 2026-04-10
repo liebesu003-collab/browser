@@ -240,6 +240,17 @@ jobs:
 
           rm -f sing-box.pid selected-proxy-tag.txt sing-box-attempts.log
 
+          check_https_status() {
+            local url="$1"
+            local status
+            status="$(curl -sS --proxy http://127.0.0.1:7897 -o /dev/null -w '%{http_code}' "$url" --max-time 20 || true)"
+            echo "status $url => $status"
+            if [ -z "$status" ] || [ "$status" = "000" ] || [ "$status" = "407" ]; then
+              return 1
+            fi
+            return 0
+          }
+
           while IFS= read -r tag; do
             [ -n "$tag" ] || continue
             echo "::group::Trying proxy node $tag"
@@ -272,8 +283,8 @@ jobs:
               continue
             fi
 
-            if curl -fsSL --proxy http://127.0.0.1:7897 -o /dev/null https://chatgpt.com/auth/login_with --max-time 20 \
-              && curl -fsSL --proxy http://127.0.0.1:7897 -o /dev/null https://auth.openai.com/ --max-time 20; then
+            if check_https_status "https://chatgpt.com/auth/login_with" \
+              && check_https_status "https://auth.openai.com/"; then
               echo "$tag" | tee selected-proxy-tag.txt
               echo "Selected proxy node: $tag"
               echo "::endgroup::"
