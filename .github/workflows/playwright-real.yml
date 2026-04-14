@@ -214,7 +214,7 @@ jobs:
             --listen-host 127.0.0.1 \
             --listen-port 7897 \
             --max-nodes 100 \
-            --test-url 'https://chatgpt.com/auth/login_with'
+            --test-url 'https://www.gstatic.com/generate_204'
           python -m json.tool sing-box-proxy.json > /dev/null
           sing-box check -D . -c sing-box-proxy.json
 
