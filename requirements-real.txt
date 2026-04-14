@@ -2,3 +2,4 @@ playwright
 playwright-stealth
 httpx
 socksio
+PyYAML

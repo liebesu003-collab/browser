@@ -26,7 +26,7 @@ on:
         type: boolean
         default: true
       use_subscription_proxy:
-        description: "Fetch nodes from top100.txt and route traffic through a local sing-box proxy"
+        description: "Fetch nodes from the subscription feed and route traffic through a local sing-box proxy"
         required: true
         type: boolean
         default: true
@@ -162,7 +162,7 @@ jobs:
           cfg.setdefault("virtualbrowser_profile_root", "profiles")
           cfg.setdefault("email_providers", ["tempmail", "mailtm"])
           cfg.setdefault("tempmail_timeout", 120)
-          cfg.setdefault("proxy_subscription_url", "https://henryli777.github.io/google_ssr_actions/sub/top100.txt")
+          cfg.setdefault("proxy_subscription_url", "https://henryli777.github.io/google_ssr_actions/sub/top100.yaml")
           cfg.setdefault("browser_locale", "en-US")
           cfg.setdefault("browser_timezone", "America/New_York")
           cfg.setdefault("browser_width", 1365)
@@ -205,7 +205,7 @@ jobs:
           import json
           with open('config.json', 'r', encoding='utf-8') as f:
               cfg = json.load(f)
-          print(cfg.get('proxy_subscription_url', 'https://henryli777.github.io/google_ssr_actions/sub/top100.txt'))
+          print(cfg.get('proxy_subscription_url', 'https://henryli777.github.io/google_ssr_actions/sub/top100.yaml'))
           PY
           )"
           python build_singbox_config.py \
