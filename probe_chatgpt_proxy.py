@@ -10,7 +10,8 @@ from typing import Any
 
 DEFAULT_LOGIN_URL = "https://chatgpt.com/auth/login_with"
 DEFAULT_TIMEOUT_MS = 20000
-DEFAULT_READY_TIMEOUT_MS = 12000
+DEFAULT_READY_TIMEOUT_MS = 30000
+DEFAULT_CHALLENGE_GRACE_MS = 20000
 DEFAULT_WAIT_AFTER_MS = 3000
 LOGIN_READY_SELECTORS = [
     'input[type="email"]',
@@ -121,26 +122,50 @@ async def gather_probe_result(page, tag: str) -> dict[str, Any]:
     }
 
 
-async def wait_for_login_ready(page, timeout_ms: int, tag: str) -> dict[str, Any]:
+async def wait_for_login_ready(
+    page,
+    timeout_ms: int,
+    tag: str,
+    challenge_grace_ms: int,
+) -> dict[str, Any]:
     end = time.monotonic() + timeout_ms / 1000
+    challenge_deadline: float | None = None
+    transient_blocked_reason: str | None = None
     last_result = await gather_probe_result(page, tag)
 
     while time.monotonic() < end:
         last_result = await gather_probe_result(page, tag)
-        if last_result["blocked_reason"]:
-            last_result["ready"] = False
-            last_result["ready_reason"] = last_result["blocked_reason"]
-            return last_result
 
         if any(count > 0 for count in last_result["selector_counts"].values()):
             last_result["ready"] = True
             last_result["ready_reason"] = "login controls detected"
+            if transient_blocked_reason:
+                last_result["transient_blocked_reason"] = transient_blocked_reason
             return last_result
+
+        blocked_reason = last_result.get("blocked_reason")
+        if blocked_reason:
+            transient_blocked_reason = transient_blocked_reason or blocked_reason
+            if challenge_deadline is None:
+                challenge_deadline = time.monotonic() + challenge_grace_ms / 1000
+            elif time.monotonic() >= challenge_deadline:
+                last_result["ready"] = False
+                last_result["ready_reason"] = blocked_reason
+                last_result["transient_blocked_reason"] = transient_blocked_reason
+                return last_result
+        else:
+            challenge_deadline = None
 
         await page.wait_for_timeout(500)
 
     last_result["ready"] = False
-    last_result["ready_reason"] = "login controls not detected before timeout"
+    if last_result.get("blocked_reason"):
+        last_result["ready_reason"] = last_result["blocked_reason"]
+    elif transient_blocked_reason:
+        last_result["ready_reason"] = "login controls not detected before timeout after transient human verification"
+        last_result["transient_blocked_reason"] = transient_blocked_reason
+    else:
+        last_result["ready_reason"] = "login controls not detected before timeout"
     return last_result
 
 
@@ -175,7 +200,12 @@ async def run_probe(args: argparse.Namespace) -> int:
                 pass
 
             await page.wait_for_timeout(args.wait_after_ms)
-            result = await wait_for_login_ready(page, args.ready_timeout_ms, args.tag)
+            result = await wait_for_login_ready(
+                page,
+                args.ready_timeout_ms,
+                args.tag,
+                args.challenge_grace_ms,
+            )
             await page.screenshot(path=str(screenshot_path), full_page=True)
         finally:
             await context.close()
@@ -192,6 +222,8 @@ async def run_probe(args: argparse.Namespace) -> int:
     print(f"probe ready_reason={result['ready_reason']}")
     if result.get("blocked_reason"):
         print(f"probe blocked_reason={result['blocked_reason']}")
+    if result.get("transient_blocked_reason"):
+        print(f"probe transient_blocked_reason={result['transient_blocked_reason']}")
     print(f"probe result_json={result_path}")
     print(f"probe screenshot={screenshot_path}")
 
@@ -206,6 +238,7 @@ def main() -> int:
     parser.add_argument("--output-dir", default="logs")
     parser.add_argument("--timeout-ms", type=int, default=DEFAULT_TIMEOUT_MS)
     parser.add_argument("--ready-timeout-ms", type=int, default=DEFAULT_READY_TIMEOUT_MS)
+    parser.add_argument("--challenge-grace-ms", type=int, default=DEFAULT_CHALLENGE_GRACE_MS)
     parser.add_argument("--wait-after-ms", type=int, default=DEFAULT_WAIT_AFTER_MS)
     args = parser.parse_args()
     return asyncio.run(run_probe(args))

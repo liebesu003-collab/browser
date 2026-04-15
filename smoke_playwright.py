@@ -53,6 +53,7 @@ DEFAULT_BROWSER_LOCALE = "en-US"
 DEFAULT_BROWSER_TIMEZONE = "America/New_York"
 DEFAULT_BROWSER_VIEWPORT = {"width": 1365, "height": 900}
 DEFAULT_LOGIN_CHALLENGE_TIMEOUT = 90
+DEFAULT_LOGIN_CHALLENGE_GRACE_TIMEOUT = 20
 
 
 class HumanVerificationRequired(RuntimeError):
@@ -919,6 +920,8 @@ async def dump_blocked_page(page, worker_id: int, label: str, reason: str | None
 async def wait_for_login_ready(page, timeout_ms: int = LOGIN_CHALLENGE_TIMEOUT * 1000) -> None:
     end = time.time() + timeout_ms / 1000
     last_state = None
+    challenge_first_seen_at: float | None = None
+    challenge_last_reason: str | None = None
     selectors = [
         'input[type="email"]',
         'input[name="email"]',
@@ -927,13 +930,35 @@ async def wait_for_login_ready(page, timeout_ms: int = LOGIN_CHALLENGE_TIMEOUT *
         'a:has-text("Sign up")',
     ]
 
+    def update_challenge_state(challenge_reason: str | None) -> None:
+        nonlocal challenge_first_seen_at, challenge_last_reason
+        if challenge_reason:
+            if challenge_first_seen_at is None:
+                challenge_first_seen_at = time.time()
+                print(
+                    "[登录页等待] 检测到验证页，继续等待最多 "
+                    f"{DEFAULT_LOGIN_CHALLENGE_GRACE_TIMEOUT} 秒: {challenge_reason}"
+                )
+            challenge_last_reason = challenge_reason
+            return
+
+        if challenge_first_seen_at is not None:
+            print("[登录页等待] 验证页已消失，继续等待登录控件...")
+        challenge_first_seen_at = None
+
+    def ensure_challenge_grace() -> None:
+        if challenge_first_seen_at is None or not challenge_last_reason:
+            return
+        if time.time() - challenge_first_seen_at >= DEFAULT_LOGIN_CHALLENGE_GRACE_TIMEOUT:
+            raise HumanVerificationRequired(challenge_last_reason)
+
     # First, wait for the page to have some content
     print("[登录页等待] 等待页面内容加载...")
     while time.time() < end:
         body = await page_body_safe(page)
-        challenge_reason = classify_human_verification([page.url, body])
-        if challenge_reason:
-            raise HumanVerificationRequired(challenge_reason)
+        challenge_reason = await detect_human_verification(page)
+        update_challenge_state(challenge_reason)
+        ensure_challenge_grace()
         if body and len(body) > 100:
             print(f"[登录页等待] 页面内容已加载 ({len(body)} bytes)")
             break
@@ -941,16 +966,16 @@ async def wait_for_login_ready(page, timeout_ms: int = LOGIN_CHALLENGE_TIMEOUT *
 
     # Then wait for interactive elements
     while time.time() < end:
-        challenge_reason = await detect_human_verification(page)
-        if challenge_reason:
-            raise HumanVerificationRequired(challenge_reason)
-
         for selector in selectors:
             try:
                 if await page.locator(selector).count() > 0:
                     return
             except Exception:
                 pass
+
+        challenge_reason = await detect_human_verification(page)
+        update_challenge_state(challenge_reason)
+        ensure_challenge_grace()
 
         title = await page_title_safe(page)
         body = await page_body_safe(page)
@@ -963,6 +988,9 @@ async def wait_for_login_ready(page, timeout_ms: int = LOGIN_CHALLENGE_TIMEOUT *
             last_state = state
 
         await page.wait_for_timeout(2000)
+
+    if challenge_first_seen_at is not None and challenge_last_reason:
+        raise HumanVerificationRequired(challenge_last_reason)
 
 
 async def fill_birthday_fields(page, birth_month: str, birth_day: str, birth_year: str) -> None:
