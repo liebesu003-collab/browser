@@ -7,8 +7,24 @@ import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
-DEFAULT_LOGIN_URL = "https://chatgpt.com/auth/login_with"
+CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+REDIRECT_URI = "http://localhost:1455/auth/callback"
+DEFAULT_LOGIN_URL = "https://auth.openai.com/oauth/authorize?" + urlencode(
+    {
+        "client_id": CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": REDIRECT_URI,
+        "scope": "openid email profile offline_access",
+        "state": "probe-state",
+        "code_challenge": "A" * 43,
+        "code_challenge_method": "S256",
+        "prompt": "login",
+        "id_token_add_organizations": "true",
+        "codex_cli_simplified_flow": "true",
+    }
+)
 DEFAULT_TIMEOUT_MS = 20000
 DEFAULT_READY_TIMEOUT_MS = 30000
 DEFAULT_CHALLENGE_GRACE_MS = 20000

@@ -2397,7 +2397,7 @@ async def register_one(playwright) -> bool:
 
         # 第5步：打开注册页面。
         print_step(5, "打开注册页面")
-        login_url = "https://chatgpt.com/auth/login_with"
+        login_url = auth_url
         await page.goto(login_url, wait_until="domcontentloaded")
         # Wait for React to hydrate and render the form
         await page.wait_for_timeout(5000)
