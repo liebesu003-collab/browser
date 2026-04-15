@@ -282,52 +282,112 @@ jobs:
               --output-dir logs
           }
 
-          while IFS= read -r tag; do
-            [ -n "$tag" ] || continue
-            echo "::group::Trying proxy node $tag"
-
-            python - <<'PY' "$tag"
+          write_active_config() {
+            local tag="$1"
+            local insecure_tls="${2:-false}"
+            python - <<'PY' "$tag" "$insecure_tls"
           import json
           import sys
           from pathlib import Path
 
           tag = sys.argv[1]
+          insecure_tls = sys.argv[2].lower() == "true"
           cfg = json.loads(Path("sing-box-proxy.json").read_text(encoding="utf-8"))
           cfg.setdefault("route", {})["final"] = tag
+
+          if insecure_tls:
+              for outbound in cfg.get("outbounds", []):
+                  if outbound.get("tag") != tag:
+                      continue
+                  tls = outbound.get("tls")
+                  if isinstance(tls, dict):
+                      tls["insecure"] = True
+                  break
+
           Path("sing-box-active.json").write_text(
               json.dumps(cfg, indent=2, ensure_ascii=False) + "\n",
               encoding="utf-8",
           )
           print(f"route.final={tag}")
+          if insecure_tls:
+              print("route.final.insecure_tls=true")
           PY
+          }
 
+          start_singbox() {
             : > sing-box.log
             nohup sing-box run -D . -c sing-box-active.json > sing-box.log 2>&1 &
             echo $! > sing-box.pid
             sleep 6
+            kill -0 "$(cat sing-box.pid)" 2>/dev/null
+          }
 
-            if ! kill -0 "$(cat sing-box.pid)" 2>/dev/null; then
+          stop_singbox() {
+            if [ -f sing-box.pid ]; then
+              kill "$(cat sing-box.pid)" 2>/dev/null || true
+              wait "$(cat sing-box.pid)" 2>/dev/null || true
+              rm -f sing-box.pid
+            fi
+          }
+
+          validate_current_proxy() {
+            local tag="$1"
+            check_chatgpt_page \
+              && check_https_status "https://auth.openai.com/" \
+              && check_chatgpt_browser_page "$tag"
+          }
+
+          should_retry_with_insecure_tls() {
+            local tag="$1"
+            python - <<'PY' "$tag"
+          import sys
+          from pathlib import Path
+
+          tag = sys.argv[1]
+          log_text = Path("sing-box.log").read_text(encoding="utf-8", errors="replace")
+          for line in log_text.splitlines():
+              if "tls: failed to verify certificate" in line and f"[{tag}]:" in line:
+                  raise SystemExit(0)
+          raise SystemExit(1)
+          PY
+          }
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "::group::Trying proxy node $tag"
+
+            write_active_config "$tag" false
+
+            if ! start_singbox; then
               echo "sing-box failed to start for $tag" | tee -a sing-box-attempts.log
               cat sing-box.log | tee -a sing-box-attempts.log || true
-              rm -f sing-box.pid
+              stop_singbox
               echo "::endgroup::"
               continue
             fi
 
-            if check_chatgpt_page \
-              && check_https_status "https://auth.openai.com/" \
-              && check_chatgpt_browser_page "$tag"; then
+            if validate_current_proxy "$tag"; then
               echo "$tag" | tee selected-proxy-tag.txt
               echo "Selected proxy node: $tag"
               echo "::endgroup::"
               break
             fi
 
+            if should_retry_with_insecure_tls "$tag"; then
+              echo "Retrying proxy node with tls.insecure=true: $tag"
+              stop_singbox
+              write_active_config "$tag" true
+              if start_singbox && validate_current_proxy "$tag"; then
+                echo "$tag" | tee selected-proxy-tag.txt
+                echo "Selected proxy node after insecure TLS retry: $tag"
+                echo "::endgroup::"
+                break
+              fi
+            fi
+
             echo "Node failed validation: $tag" | tee -a sing-box-attempts.log
             cat sing-box.log | tee -a sing-box-attempts.log || true
-            kill "$(cat sing-box.pid)" 2>/dev/null || true
-            wait "$(cat sing-box.pid)" 2>/dev/null || true
-            rm -f sing-box.pid
+            stop_singbox
             echo "::endgroup::"
           done < sing-box-candidates.txt
 
